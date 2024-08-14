@@ -20,7 +20,9 @@ mbed用のオーディオ・フレームワーク『雲仙』を開発、公開�
 以下、雲仙の利用方法について説明します。
 
 ## 信号処理を行う
-信号処理は、信号処理コールバック関数の中に記述します。このコールバック関数は雲仙の Framework::start() メソッド実行時にフレームワークに登録され、以後I2S受信データが貯まる度に呼び出されます。サンプル･アプリケーションの信号処理コールバック関数はprocess_callback()です。名前はアプリケーションによって変えてかまいません。
+信号処理は、信号処理コールバック関数の中に記述します。このコールバック関数は雲仙の Framework::start() メソッド実行時にフレームワークに登録され、以後I2S受信データが貯まる度に呼び出されます。
+
+サンプル･アプリケーションの信号処理コールバック関数はprocess_callback()です。名前はアプリケーションによって変えてかまいません。
 
 ```C++
     // customer signal processing call back.
@@ -69,53 +71,78 @@ void init_callback(
 ```
 サンプルの初期化コールバックは空ですが、ここに好きな初期化コードを書けば、そのコードはフレームワークの実行開始時に一度だけ、割り込みが発生する前に呼ばれます。
 
-## 管理プログラムの実装
+## 管理プログラムの実装例
 
 main.cpp の main() 関数には信号処理アルゴリズムの外側で実行すべき管理プログラムを書きます。一般にはUIの処理、外部との通信、ファイル・アクセスなどをここに書きます。ここではmbed SDKが提供するAPIを使うことが出来ます。
 
-管理プログラムが信号処理アルゴリズムと通信する場合には、SignalProcessing * 型変数 process を介して通信を行ってください。
-
-以下の例では一定時間後にボリュームの値を読み取り、process->set_volume() を使ってゲインを設定しています。なお、オーディオ・フレームワークの処理を始めるのに必要なことは、initialize_system()の呼び出しだけです。
+以下の例では[Shimabara](https://github.com/suikan4github/Shimabara)コーデックドライバを使ってADAU1361Aを初期化しています。
 
 ```C++
+#include "unzen.h"          // audio framework include file
+#include "umb_adau1361a.h"     // audio codec contoler include file
+#include "mbed.h"
+
+#define CODEC_I2C_ADDR 0x38
+
+DigitalOut myled1(LED1);
+
+
 int main() 
 {    
-    uint32_t pushing, releasing, holding;
+        // I2C is essential to talk with ADAU1361
+    I2C i2c(SDA, SCL);
 
-        // start audio. Do not touch
-    initialize_system();
+        // create an audio codec contoler
+    shimabara::UMB_ADAU1361A codec(shimabara::Fs_32, &i2c, CODEC_I2C_ADDR ); // Default Fs is 48kHz
+
+       // create an audio framework by singlton pattern
+    unzen::Framework audio;
  
-       // main loop. Signal processing is done in background.
+         // Set I3C clock to 100kHz
+    i2c.frequency( 100000 );
+
+        // Configure the optional block size of signal processing. By default, it is 1[Sample] 
+//    audio.set_block_size(16);
+    
+        // Start the ADAU1361. Audio codec starts to generate the I2C signals 
+    codec.start();
+
+        // Start the audio framework on ARM processor.  
+    audio.start( init_callback, process_callback);     // path the initializaiton and process call back to framework 
+
+        // periodically changing gain for test
     while(1)     
-    {       // place your foreground program here.
-
-            // get volume from UI panel, then apply it to signal processing.
-        process->set_volume( ukifune::get_volume(0) );   
-       
-            // sample usage of button switch detection
-        ukifune::get_button_state( pushing, releasing, holding);
-
-            // pushing detection demo
-        if ( pushing & (1 << ukifune::swm1 ) )      // is SWM1 switch pusshing down?
-            ukifune::toggle_led( ukifune::led1_1 ); // then, toggle LED1_1 
-
-            // releasing detection demo     
-        if ( releasing & (1 << ukifune::swm2 ) )    // is SWM2 switch releasing? 
-            ukifune::toggle_led( ukifune::led2_1 ); // then toggle LED2_1
-       
-            // holding detection demo     
-        if ( holding & (1 << ukifune::swm3 ) )    // is SWM3 switch holding? 
-            ukifune::turn_led_on( ukifune::led3_1 );    // then turn LED3_1 on
-        else
-            ukifune::turn_led_off( ukifune::led3_1 );   // else off
-
-       
-            // you have to call tick() every 20mS-50mS if you need get_volume()
-        wait(0.05);
-        ukifune::tick();
+    {
+        wait(1.0);
     }
-}   // End of main
+}
 ```
+
+initialize_system()関数は名前の通り、システムの初期化を行います。オーディオに関連する部分はaudio変数とcodec変数にまとめられています。
+
+```C++
+void initialize_system(void)
+{
+        // Set I2C clock to 100kHz
+    i2c.frequency( 100000 );
+ 
+        // Configure the optional block size of signal processing. By default, it is 1[Sample] 
+    audio.set_block_size(BLOCKSIZE);
+
+        // Start UI module.
+    ukifune::init( & audio );
+   
+        // Start the ADAU1361. Audio codec starts to generate the I2C signals 
+    codec.start();
+        // Start the audio framework on ARM processor.  
+    audio.start( init_callback, process_callback);     // path the initializaiton and process call back to framework 
+ 
+        // Setup initial analog gain   
+    codec.set_hp_output_gain( 0, 0 );
+    codec.set_line_output_gain( 0, 0 );
+}
+```
+
 
 ## ライセンス
 
